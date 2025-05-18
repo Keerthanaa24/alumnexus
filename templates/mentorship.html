@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -11,13 +11,13 @@
             padding: 0;
             background: url('/static/images/background_feed.png') no-repeat center center/cover;
             text-align: center;
-            height: 100vh;
+            height:100vh;
         }
 
         .hero {
             padding: 60px 20px;
             color: white;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.6); /* Transparent background */
             border-radius: 10px;
             width: 80%;
             margin: 20px auto;
@@ -46,7 +46,7 @@
         .categories, .mentors, .mentorship-info {
             margin: 50px auto;
             padding: 20px;
-            background: rgba(255, 255, 255, 0.8);
+            background: rgba(255, 255, 255, 0.8); /* Semi-transparent white */
             border-radius: 10px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             width: 80%;
@@ -74,7 +74,7 @@
         }
 
         .mentor {
-            background: rgba(255, 255, 255, 0.85);
+            background: rgba(255, 255, 255, 0.85); /* Transparent card */
             padding: 20px;
             border-radius: 10px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
@@ -110,7 +110,6 @@
             border-radius: 10px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
-
         .hidden {
             display: none !important;
         }
@@ -118,76 +117,77 @@
 </head>
 <body>
 
-<div class="hero">
-    <h1>Find a Mentor to Boost Your Career</h1>
-    <p>Search for verified, public alumni mentors open for sessions.</p>
+    <div class="hero">
+        <h1>Find a Mentor to Boost Your Career</h1>
+        <p>Search for verified, public alumni mentors open for sessions.</p>
 
-    <div class="search-box">
-        <input type="text" id="searchInput" placeholder="Search mentors...">
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search mentors...">
+        </div>
     </div>
-</div>
 
-<div class="mentor-list" id="mentorContainer">
-    {% if mentors %}
-        {% for mentor in mentors %}
-            <div class="mentor" data-field="{{ (mentor.fullname ~ ' ' ~ (mentor.session_description or ''))|lower }}">
-                <h3>{{ mentor.fullname }}</h3>
-                <p>Graduation Year: {{ mentor.graduation_year }}</p>
-                <p>About: {{ mentor.session_description }}</p>
-                <p>Next Session: {{ mentor.session_start_time or "TBD" }}</p>
-                <button class="book-btn" data-session-id="{{ mentor.session_id }}">Book Session</button>
-            </div>
-        {% endfor %}
-    {% else %}
-        <p style="text-align: center;">No mentors available at the moment.</p>
-    {% endif %}
-</div>
+    <div class="mentor-list" id="mentorContainer">
+        {% if mentors %}
+            {% for mentor in mentors %}
+                <div class="mentor" data-field="{{ (mentor.fullname ~ ' ' ~ (mentor.session_description or ''))|lower }}">
+                    
+                    <h3>{{ mentor.fullname }}</h3>
+                    <p>Graduation Year: {{ mentor.graduation_year }}</p>
+                    <p>About: {{ mentor.session_description }}</p>
+                    <p>Next Session: {{ mentor.session_start_time or "TBD" }}</p>
+                    <button class="book-btn" data-session-id="{{ mentor.session_id }}">Book Session</button>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p style="text-align: center;">No mentors available at the moment.</p>
+        {% endif %}
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Live search filter
+            document.getElementById("searchInput").addEventListener("input", filterMentors);
 
-<script>
-    document.addEventListener('DOMContentLoaded', function () {
-        // Live search filter
-        document.getElementById("searchInput").addEventListener("input", filterMentors);
+            // Book session logic
+            document.querySelectorAll('.book-btn').forEach(button => {
+                button.addEventListener('click', () => {
+                    const sessionId = button.dataset.sessionId;
 
-        // Book session logic
-        document.querySelectorAll('.book-btn').forEach(button => {
-            button.addEventListener('click', () => {
-                const sessionId = button.dataset.sessionId;
-
-                fetch('/book_session', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ session_id: sessionId })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) {
-                        alert("Session booked!");
-                        button.disabled = true;
-                        button.textContent = "Booked";
-                    } else {
-                        alert(data.message);
-                    }
-                })
-                .catch(err => {
-                    console.error(err);
-                    alert("Error booking session.");
+                    fetch('/book_session', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ session_id: sessionId })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert("Session booked!");
+                            button.disabled = true;
+                            button.textContent = "Booked";
+                        } else {
+                            alert(data.message);
+                        }
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        alert("Error booking session.");
+                    });
                 });
             });
         });
-    });
 
-    function filterMentors() {
-        const input = document.getElementById("searchInput").value.toLowerCase();
-        const mentorCards = document.querySelectorAll(".mentor");
+        function filterMentors() {
+            const input = document.getElementById("searchInput").value.toLowerCase();
+            const mentorCards = document.querySelectorAll(".mentor");
 
-        mentorCards.forEach(card => {
-            const text = card.innerText.toLowerCase();
-            card.style.display = text.includes(input) ? "block" : "none";
-        });
-    }
-</script>
-
+            mentorCards.forEach(card => {
+                const text = card.innerText.toLowerCase();
+                card.style.display = text.includes(input) ? "block" : "none";
+            });
+        }
+    </script>
+    
 </body>
 </html>
