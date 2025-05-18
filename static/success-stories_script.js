@@ -99,7 +99,7 @@ function openProfile(index) {
     console.log("Opening profile for:", alumni.name);
     
     // Force redirect
-    window.location.assign(`/alumni-profile?name=${encodeURIComponent(alumni.name)}`);
+    window.location.replace(`/alumni-profile?name=${encodeURIComponent(alumni.name)}`);
 }
 
 
