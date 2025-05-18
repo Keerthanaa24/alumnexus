@@ -14,6 +14,10 @@ if (selectedAlumni) {
         listItem.textContent = milestone;
         milestonesList.appendChild(listItem);
     });
+
+    // 🔑 Clear it after use to prevent re-triggering on back
+    localStorage.removeItem("selectedAlumni");
 } else {
-    window.location.href = "/static/success-stories.html";
+    // 👇 Use replace to avoid adding new entry in history
+    window.location.replace("/success_stories.html");
 }
