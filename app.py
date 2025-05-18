@@ -400,16 +400,6 @@ def signup():
 
     return render_template('signup.html')
 
-
-@app.route('/verify-email')
-def verify_email():
-    """Mock email verification"""
-    email = request.args.get('email')
-    with get_db() as conn:
-        conn.execute("UPDATE user SET verified = 1 WHERE email = ?", (email,))
-        conn.commit()
-    return jsonify(success=True, message="Email verified successfully. You can now log in.")
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
@@ -484,113 +474,6 @@ def login():
         
         return jsonify(success=False, message="Incorrect username or password")
 
-
-@app.route('/forgot_password', methods=['GET', 'POST'])
-def forgot_password():
-    if request.method == 'POST':
-        email = request.form.get("email")
-
-        if not email:
-            return "Email is required", 400
-
-        with get_db() as conn:
-            user = conn.execute("SELECT * FROM user WHERE email = ?", (email,)).fetchone()
-
-            if not user:
-                return redirect(url_for('forgot_password'))  # Silent fail
-
-            # ✅ Generate secure token
-            token = secrets.token_urlsafe(32)
-            expires_at = (datetime.now() + timedelta(hours=1)).isoformat()
-
-            # ✅ Store token in DB
-            conn.execute("""
-                INSERT INTO password_reset_token (user_id, token, expires_at)
-                VALUES (?, ?, ?)
-            """, (user['id'], token, expires_at))
-            conn.commit()
-
-            # ✅ Compose reset link
-            reset_link = f"{BASE_URL}/reset_password?token={token}"
-
-            # ✅ Send email
-            send_reset_email(user['email'], reset_link)
-
-            print(f"[INFO] Sent password reset link: {reset_link}")  # For debug
-
-            return render_template('forgot_password.html', sent=True)
-
-    return render_template('forgot_password.html')
-
-def send_reset_email(to_email, reset_link):
-    subject = "Alumnexus Password Reset"
-    body = f"Click the link below to reset your password:\n\n{reset_link}\n\nIf you did not request this, ignore this email."
-
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = to_email
-
-    try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.send_message(msg)
-        print("[INFO] Reset email sent successfully.")
-    except Exception as e:
-        print("[ERROR] Failed to send email:", e)
-
-
-@app.route('/reset_password', methods=['GET', 'POST'])
-def reset_password():
-    token = request.args.get("token")
-
-    if request.method == 'GET':
-        if not token:
-            return "Invalid or expired link", 400
-
-        with get_db() as conn:
-            token_data = conn.execute("""
-                SELECT * FROM password_reset_token
-                WHERE token = ? AND used = 0 AND expires_at > ?
-            """, (token, datetime.now().isoformat())).fetchone()
-
-            if not token_data:
-                return "Invalid or expired token", 400
-
-        return render_template('reset_password.html', token=token)
-
-    elif request.method == 'POST':
-        new_password = request.form.get("new_password")
-        confirm_password = request.form.get("confirm_password")
-        token = request.form.get("token")
-
-        if new_password != confirm_password:
-            return jsonify(success=False, message="Passwords do not match")
-
-        if not is_strong_password(new_password):
-            return jsonify(success=False, message="Password too weak")
-
-        with get_db() as conn:
-            token_data = conn.execute("""
-                SELECT * FROM password_reset_token
-                WHERE token = ? AND used = 0 AND expires_at > ?
-            """, (token, datetime.now().isoformat())).fetchone()
-
-            if not token_data:
-                return jsonify(success=False, message="Invalid or expired token")
-
-            # ✅ Update user password
-            hashed_pw = generate_password_hash(new_password)
-            conn.execute("UPDATE user SET password_hash = ? WHERE id = ?", (hashed_pw, token_data['user_id']))
-
-            # ✅ Mark token as used
-            conn.execute("UPDATE password_reset_token SET used = 1 WHERE id = ?", (token_data['id'],))
-            conn.commit()
-
-        return jsonify(success=True, redirect=url_for('login'))
-
-
 @app.route('/dashboard')
 def dashboard():
     if "user" not in session:
@@ -610,8 +493,6 @@ def dashboard():
 
         user_id = current_user['id']
         print(f"Current user ID: {user_id}")
-
-        # Get suggested alumni connections (full details, excluding already connected users)
         suggested_connections = conn.execute("""
             SELECT u.* FROM user u
             LEFT JOIN user_block b ON (b.blocker_id = ? AND b.blocked_id = u.id)
@@ -619,7 +500,7 @@ def dashboard():
                 AND u.verified = 1
                 AND u.active = 1
                 AND u.role = 'Alumni'
-                AND (u.privacy = 'public' OR u.privacy IS NULL)
+                AND (u.privacy = 'public' OR u.privacy IS NULL)  -- Only public profiles
                 AND b.id IS NULL
                 AND u.id NOT IN (
                     SELECT CASE
@@ -777,12 +658,14 @@ def profile():
                 """, (user['id'],)).fetchall()
 
             # Get accepted connections
-            connections = conn.execute("""
-                SELECT u.id, u.fullname, u.graduation_year, p.current_job, p.company 
+           connections = conn.execute("""
+                SELECT u.id, u.fullname, u.graduation_year
                 FROM connection c
                 JOIN user u ON (c.sender_id = u.id OR c.receiver_id = u.id) AND u.id != ?
-                LEFT JOIN profile p ON u.id = p.user_id
-                WHERE (c.sender_id = ? OR c.receiver_id = ?) AND c.status = 'accepted'
+                
+                WHERE (c.sender_id = ? OR c.receiver_id = ?) 
+                    AND c.status = 'accepted'
+                    AND u.privacy != 'private'
             """, (user['id'], user['id'], user['id'])).fetchall()
 
             return render_template('profile.html', 
@@ -998,16 +881,16 @@ def get_alumni():
         current_user = conn.execute("SELECT id FROM user WHERE email = ?", (session["user"],)).fetchone()
         if not current_user:
             return jsonify([])
-        
-        # Base query
         query = """
             SELECT u.id, u.fullname, u.graduation_year, p.current_job, p.company 
             FROM user u
             LEFT JOIN profile p ON u.id = p.user_id
-            WHERE u.email != ? AND u.role = 'Alumni'
+            WHERE u.email != ? 
+            AND u.role = 'Alumni'
+            AND (u.privacy = 'public' OR u.privacy IS NULL)
         """
         params = [session["user"]]
-        
+       
         # Add search conditions if query exists
         if search_query:
             query += """
