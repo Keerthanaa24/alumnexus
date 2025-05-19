@@ -257,6 +257,15 @@ CREATE TABLE IF NOT EXISTS session_message (
             locked_until TEXT,
             deleted_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS cancelled_events (
+            event_id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            location TEXT,
+            description TEXT,
+            cancelled_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_rsvp_user_event ON rsvp(user_id, event_id);
         CREATE INDEX IF NOT EXISTS idx_event_start_time ON event(start_time);
         """)
@@ -1234,43 +1243,65 @@ def get_cancelled_events_for_user():
             return jsonify([])
     
 @app.route('/api/events/<int:event_id>', methods=['DELETE'])
-def delete_event(event_id):
+def cancel_event(event_id):  # Rename from delete_event to match frontend expectation
     if 'user' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
         
     try:
         with get_db() as conn:
-            # Get event details
-            event = conn.execute("SELECT * FROM event WHERE id = ?", (event_id,)).fetchone()
+            # 1. Get event details first
+            event = conn.execute("""
+                SELECT id, title, start_time, location, description 
+                FROM event 
+                WHERE id = ?
+            """, (event_id,)).fetchone()
+            
             if not event:
                 return jsonify({'error': 'Event not found'}), 404
             
-            print(f"DEBUG: Cancelling event: {event['title']} (ID: {event_id})")  # Debug log
+            print(f"Cancelling event {event_id} ({event['title']})")
             
-            # Get RSVP'd users
-            rsvp_users = conn.execute("SELECT user_id FROM rsvp WHERE event_id = ?", (event_id,)).fetchall()
-            print(f"DEBUG: Found {len(rsvp_users)} RSVP'd users")  # Debug log
+            # 2. Insert into cancelled_events with all details
+            conn.execute("""
+                INSERT INTO cancelled_events 
+                (event_id, title, start_time, location, description)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                event['id'], 
+                event['title'],
+                event['start_time'],
+                event['location'],
+                event['description']
+            ))
             
-            # Create notifications
+            # 3. Get RSVP'd users
+            rsvp_users = conn.execute("""
+                SELECT u.id, u.email FROM user u
+                JOIN rsvp r ON u.id = r.user_id
+                WHERE r.event_id = ?
+            """, (event_id,)).fetchall()
+            print(f"Users to notify: {[u['email'] for u in rsvp_users]}")
+            
+            # 4. Create notifications
             for user in rsvp_users:
-                user_id = user['user_id']
-                message = f"Event '{event['title']}' has been cancelled."
-                print(f"DEBUG: Creating notification for user {user_id}: {message}")  # Debug log
                 conn.execute("""
                     INSERT INTO notifications (user_id, message)
                     VALUES (?, ?)
-                """, (user_id, message))
+                """, (user['id'], f"Event cancelled: {event['title']}"))
             
-            # Delete the event and RSVPs
+            # 5. Clean up
             conn.execute("DELETE FROM event WHERE id = ?", (event_id,))
             conn.execute("DELETE FROM rsvp WHERE event_id = ?", (event_id,))
             conn.commit()
             
-            print("DEBUG: Event cancellation completed successfully")  # Debug log
-            return jsonify({'success': True}), 200
+            return jsonify({
+                'message': 'Event cancelled successfully',
+                'cancelled_event': dict(event)
+            })
             
     except Exception as e:
-        print(f"ERROR in event cancellation: {str(e)}")  # Debug log
+        conn.rollback()
+        print(f"Error cancelling event: {str(e)}")
         return jsonify({'error': str(e)}), 500
         
 @app.route('/test-cancelled')
@@ -1887,11 +1918,6 @@ def book_session():
         print("Error booking session:", e)
         return jsonify({'success': False, 'message': 'Internal server error'}), 500
 
-
-
-
-
-
 @app.route('/direct-session')
 def direct_session():
     if "user" not in session:
@@ -2070,9 +2096,6 @@ def get_message(session_id):
         print("Error fetching messages:", e)
         return jsonify({'success': False, 'message': 'Server error'}), 500
 
-
-
-
 # import random
 # import string
 
@@ -2130,9 +2153,6 @@ def get_message(session_id):
 #     except Exception as e:
 #         print(f"Error: {e}")
 #         return jsonify({'success': False, 'message': 'Internal Server Error'}), 500
-
-
-
 
 
 @app.route('/get_meet_link/<int:session_id>')
@@ -2528,8 +2548,6 @@ def verify_admin_key():
 def dashfeed():
     if "user" in session:
         return render_template('dashfeed.html')  # Make sure dashfeed.html exists in templates folder
-
-
 
 
 @app.route('/events_admin')
