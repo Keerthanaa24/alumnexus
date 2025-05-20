@@ -4,7 +4,7 @@ An alumni-student networking platform built using Flask, SQLite, HTML, CSS, and 
 
 ## 🔗 Live Demo
 
-[Visit Website](https://alumnexus.onrender.com)
+[Visit Website](https://alumnexus-2rsl.onrender.com)
 
 ## ⚙️ Features
 
