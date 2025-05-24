@@ -627,163 +627,96 @@ def get_notifications():
 
 @app.route('/profile', methods=['GET', 'POST'])
 def profile():
-    if "user" not in session:
+    if 'user' not in session:
         return redirect(url_for('login'))
 
-    session_email = session["user"]
+    if request.method == 'POST':
+        try:
+            # Get form data
+            first_name = request.form.get("first_name", "").strip()
+            last_name = request.form.get("last_name", "").strip()
+            department = request.form.get("department", "").strip()
+            new_email = request.form.get("email", "").strip().lower()
+            resume = request.files.get("resume")
+            avatar = request.files.get("avatar")
+            user_id = session['user']['id']
+            session_email = session['user']['email']
 
-    if request.method == 'GET':
-        with get_db() as conn:
-            user = conn.execute("SELECT * FROM user WHERE email = ?", (session_email,)).fetchone()
-            if not user:
-                return redirect(url_for('login'))
+            with get_db() as conn:
+                # Get current user data
+                current_user = conn.execute(
+                    "SELECT * FROM user WHERE id = ?", 
+                    (user_id,)
+                ).fetchone()
 
-            user = dict(user)
-            if user["avatar"]:
-                user["avatar"] = base64.b64encode(user["avatar"]).decode("utf-8")
-            
-            # Get role from user data
-            role = user['role']
-            
-            resume_url = None
-            if user["resume"]:
-                resume_url = "/download_resume/{}".format(user['id'])
-
-            skills = conn.execute("SELECT name, percentage FROM skill WHERE user_id = ?", (user['id'],)).fetchall()
-
-            # Get sessions based on role - modified to use new table structure
-            if role.lower() == 'student':
-                sessions = conn.execute("""
-                    SELECT ms.session_id, ms.session_time as session_start_time, 
-                        ms.session_description, ms.mentor_name,
-                        ms.mentor_image
-                    FROM mentor_session ms
-                    JOIN session_member sm ON ms.session_id = sm.session_id
-                    WHERE sm.student_id = ?
-                """, (user['id'],)).fetchall()
-            else:  # Alumni
-                sessions = conn.execute("""
-                    SELECT session_id, session_time as session_start_time, 
-                           session_description, mentor_name, mentor_field,
-                           mentor_image
-                    FROM mentor_session
-                    WHERE alumni_id = ?
-                """, (user['id'],)).fetchall()
-
-            # Get accepted connections
-           connections = conn.execute("""
-                SELECT u.id, u.fullname, u.graduation_year
-                FROM connection c
-                JOIN user u ON (c.sender_id = u.id OR c.receiver_id = u.id) AND u.id != ?
+                # Check for duplicate email (excluding current user)
+                if new_email != session_email:
+                    existing = conn.execute(
+                        "SELECT * FROM user WHERE email = ? AND id != ?", 
+                        (new_email, user_id)
+                    ).fetchone()
+                    if existing:
+                        return jsonify(success=False, message="This email is already registered with another account.")
                 
-                WHERE (c.sender_id = ? OR c.receiver_id = ?) 
-                    AND c.status = 'accepted'
-                    AND u.privacy != 'private'
-            """, (user['id'], user['id'], user['id'])).fetchall()
+                # Validate profile picture: Check if avatar is provided or already exists in the current user
+                if not avatar and not current_user['avatar']:
+                    return jsonify(success=False, message="Please upload a profile picture.")
 
-            return render_template('profile.html', 
-                user=user, 
-                skills=skills, 
-                resume_url=resume_url,
-                role=role,
-                sessions=sessions,
-                connections=connections
-            )
-    
-    # POST request handling remains exactly the same
-    first_name = request.form.get("first_name", "").strip()
-    last_name = request.form.get("last_name", "").strip()
-    department = request.form.get("department", "").strip()
-    new_email = request.form.get("email", "").strip()
-    privacy = request.form.get("privacy", "public").strip()
-    resume = request.files.get("resume")
-    avatar = request.files.get("avatar")
+                # If avatar is uploaded, use it, otherwise retain the current user's avatar
+                resume_data = resume.read() if resume else current_user.get('resume')
+                avatar_data = avatar.read() if avatar else current_user['avatar']
 
-    # Validate required fields
-    required_fields = {
-        "First Name": first_name,
-        "Last Name": last_name,
-        "Department": department,
-        "Email": new_email
-    }
-    
-    missing_fields = [field for field, value in required_fields.items() if not value]
-    if missing_fields:
-        return jsonify(
-            success=False,
-            message=f"Please fill all required fields: {', '.join(missing_fields)}"
-        )
+                privacy = request.form.get("privacy", "public").strip()
 
-    try:
-        with get_db() as conn:
-            row = conn.execute("SELECT * FROM user WHERE email = ?", (session_email,)).fetchone()
-            if not row:
-                return jsonify(success=False, message="User not found.")
-            current_user = dict(row)
+                # Update user data
+                conn.execute('''
+                    UPDATE user SET
+                        first_name = ?,
+                        last_name = ?,
+                        department = ?,
+                        email = ?,
+                        resume = ?,
+                        avatar = ?,
+                        privacy = ?
+                    WHERE id = ?
+                ''', (
+                    first_name,
+                    last_name,
+                    department,
+                    new_email,
+                    resume_data,
+                    avatar_data if avatar_data else current_user.get('avatar'),  # Keep existing if no new upload
+                    privacy,
+                    user_id
+                ))
 
-            user_id = current_user['id']
+                conn.commit()
 
-            # Check for duplicate email (excluding current user)
+                # Save updated skills
+                skills_data = request.form.get("skills", "[]")
+                skills = json.loads(skills_data)
+
+                conn.execute("DELETE FROM skill WHERE user_id = ?", (user_id,))
+                for skill in skills:
+                    name = skill.get("name")
+                    percentage = int(skill.get("percentage", 0))
+                    conn.execute(
+                        "INSERT INTO skill (user_id, name, percentage) VALUES (?, ?, ?)", 
+                        (user_id, name, percentage)
+                    )
+
+                conn.commit()
+
+            # Update session if email changed
             if new_email != session_email:
-                existing = conn.execute("SELECT * FROM user WHERE email = ? AND id != ?", (new_email, user_id)).fetchone()
-                if existing:
-                    return jsonify(success=False, message="This email is already registered with another account.")
-                
-            # Validate profile picture: Check if avatar is provided or already exists in the current user
-            if not avatar and not current_user['avatar']:
-                return jsonify(success=False, message="Please upload a profile picture.")
+                session["user"]["email"] = new_email
 
-            # If avatar is uploaded, use it, otherwise retain the current user's avatar
-            resume_data = resume.read() if resume else current_user.get('resume')
-            avatar_data = avatar.read() if avatar else current_user['avatar']
+            return jsonify(success=True, message="Profile updated successfully.")
 
-            privacy = request.form.get("privacy", "public").strip()
-
-            # Update user data
-            conn.execute('''
-                UPDATE user SET
-                    first_name = ?,
-                    last_name = ?,
-                    department = ?,
-                    email = ?,
-                    resume = ?,
-                    avatar = ?,
-                    privacy = ?
-                WHERE id = ?
-            ''', (
-                first_name,
-                last_name,
-                department,
-                new_email,
-                resume_data,
-                avatar_data if avatar_data else current_user.get('avatar'),  # Keep existing if no new upload
-                privacy,
-                user_id
-            ))
-
-            conn.commit()
-
-            # 👉 Save updated skills
-            skills_data = request.form.get("skills", "[]")
-            skills = json.loads(skills_data)
-
-            conn.execute("DELETE FROM skill WHERE user_id = ?", (user_id,))
-            for skill in skills:
-                name = skill.get("name")
-                percentage = int(skill.get("percentage", 0))
-                conn.execute("INSERT INTO skill (user_id, name, percentage) VALUES (?, ?, ?)", (user_id, name, percentage))
-
-            conn.commit()
-
-        # Update session if email changed
-        session["user"] = new_email
-
-        return jsonify(success=True, message="Profile updated successfully.")
-
-    except IntegrityError:
-        return jsonify(success=False, message="A user with this email already exists.")
-    except Exception as e:
-        return jsonify(success=False, message=f"An error occurred: {str(e)}")
+        except IntegrityError:
+            return jsonify(success=False, message="A user with this email already exists.")
+        except Exception as e:
+            return jsonify(success=False, message=f"An error occurred: {str(e)}")
     
 @app.route('/create_mentor_session', methods=['POST'])
 def create_mentor_session():
@@ -1707,28 +1640,39 @@ def verify_payment():
     data = request.json
     
     try:
-        # First verify the payment signature
+        # Verify payment signature
         razorpay_client.utility.verify_payment_signature({
             'razorpay_order_id': data['razorpay_order_id'],
             'razorpay_payment_id': data['razorpay_payment_id'],
             'razorpay_signature': data['razorpay_signature']
         })
         
-        # Then check the payment status
+        # Verify payment status
         payment = razorpay_client.payment.fetch(data['razorpay_payment_id'])
         if payment['status'] != 'captured':
             return jsonify({'error': 'Payment not captured', 'status': 'failure'}), 400
         
-        # Get the order details
-        order = razorpay_client.order.fetch(data['razorpay_order_id'])
+        # Get user ID safely
+        user_id = session['user'].get('id')
+        if not user_id:
+            return jsonify({'error': 'User ID not found in session'}), 400
         
-        # Record the donation only if payment was successful
+        # Verify user exists
         with get_db() as conn:
+            user_exists = conn.execute(
+                "SELECT 1 FROM user WHERE id = ?", 
+                (user_id,)
+            ).fetchone()
+            
+            if not user_exists:
+                return jsonify({'error': 'User does not exist', 'status': 'failure'}), 400
+            
+            # Record the donation
             conn.execute(
                 "INSERT INTO donations (user_id, campaign_name, amount, transaction_id) VALUES (?, ?, ?, ?)",
-                (session['user']['id'], 
-                 order['notes']['campaign'], 
-                 order['amount']/100,  # Convert from paise to rupees
+                (user_id, 
+                 data.get('notes', {}).get('campaign', 'General Donation'),
+                 payment['amount']/100,  # Convert from paise to rupees
                  data['razorpay_payment_id'])
             )
             conn.commit()
@@ -1736,7 +1680,7 @@ def verify_payment():
         return jsonify({'status': 'success'})
         
     except Exception as e:
-        print(f"Payment verification error: {str(e)}")
+        app.logger.error(f"Payment verification failed: {str(e)}")
         return jsonify({'error': str(e), 'status': 'failure'}), 400
     
 
