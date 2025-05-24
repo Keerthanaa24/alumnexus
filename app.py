@@ -96,24 +96,24 @@ def init_db():
             FOREIGN KEY(alumni_id) REFERENCES user(id)
         );
 
-CREATE TABLE IF NOT EXISTS session_member (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL,
-    student_id INTEGER NOT NULL,
-    joined_session BOOLEAN DEFAULT 0,
-    FOREIGN KEY(session_id) REFERENCES mentor_session(session_id),
-    FOREIGN KEY(student_id) REFERENCES user(id)
-);
+        CREATE TABLE IF NOT EXISTS session_member (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            joined_session BOOLEAN DEFAULT 0,
+            FOREIGN KEY(session_id) REFERENCES mentor_session(session_id),
+            FOREIGN KEY(student_id) REFERENCES user(id)
+        );
 
-CREATE TABLE IF NOT EXISTS session_message (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    content TEXT NOT NULL,
-    FOREIGN KEY(session_id) REFERENCES mentor_session(session_id),
-    FOREIGN KEY(user_id) REFERENCES user(id)
-);
+        CREATE TABLE IF NOT EXISTS session_message (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            content TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES mentor_session(session_id),
+            FOREIGN KEY(user_id) REFERENCES user(id)
+        );
         
        CREATE TABLE IF NOT EXISTS job (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -717,7 +717,7 @@ def profile():
             return jsonify(success=False, message="A user with this email already exists.")
         except Exception as e:
             return jsonify(success=False, message=f"An error occurred: {str(e)}")
-    
+
 @app.route('/create_mentor_session', methods=['POST'])
 def create_mentor_session():
     if 'user' not in session:
@@ -1634,55 +1634,95 @@ def create_order():
 
 @app.route('/verify-payment', methods=['POST'])
 def verify_payment():
-    if 'user' not in session:
-        return jsonify({'error': 'Not authenticated'}), 401
+    if 'user' not in session or not isinstance(session['user'], dict):
+        return jsonify({'error': 'Not authenticated or invalid session', 'status': 'failure'}), 401
         
     data = request.json
     
+    # Validate required fields
+    required_fields = ['razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature']
+    if not all(field in data for field in required_fields):
+        return jsonify({'error': 'Missing payment verification data', 'status': 'failure'}), 400
+    
     try:
-        # Verify payment signature
+        # 1. Verify payment signature
         razorpay_client.utility.verify_payment_signature({
             'razorpay_order_id': data['razorpay_order_id'],
             'razorpay_payment_id': data['razorpay_payment_id'],
             'razorpay_signature': data['razorpay_signature']
         })
         
-        # Verify payment status
+        # 2. Verify payment status
         payment = razorpay_client.payment.fetch(data['razorpay_payment_id'])
         if payment['status'] != 'captured':
+            app.logger.warning(f"Payment not captured: {payment}")
             return jsonify({'error': 'Payment not captured', 'status': 'failure'}), 400
         
-        # Get user ID safely
+        # 3. Get and validate user
         user_id = session['user'].get('id')
         if not user_id:
-            return jsonify({'error': 'User ID not found in session'}), 400
+            return jsonify({'error': 'User ID not found in session', 'status': 'failure'}), 400
         
-        # Verify user exists
+        # 4. Verify user exists and get campaign name
         with get_db() as conn:
-            user_exists = conn.execute(
-                "SELECT 1 FROM user WHERE id = ?", 
+            # Verify user exists
+            user = conn.execute(
+                "SELECT id FROM user WHERE id = ?", 
                 (user_id,)
             ).fetchone()
             
-            if not user_exists:
+            if not user:
                 return jsonify({'error': 'User does not exist', 'status': 'failure'}), 400
             
-            # Record the donation
-            conn.execute(
-                "INSERT INTO donations (user_id, campaign_name, amount, transaction_id) VALUES (?, ?, ?, ?)",
-                (user_id, 
-                 data.get('notes', {}).get('campaign', 'General Donation'),
-                 payment['amount']/100,  # Convert from paise to rupees
-                 data['razorpay_payment_id'])
-            )
-            conn.commit()
+            # Get campaign name from order notes or fallback
+            order = razorpay_client.order.fetch(data['razorpay_order_id'])
+            campaign_name = order.get('notes', {}).get('campaign', 'General Donation')
+            
+            # 5. Record the donation
+            try:
+                conn.execute(
+                    """INSERT INTO donations 
+                    (user_id, campaign_name, amount, transaction_id) 
+                    VALUES (?, ?, ?, ?)""",
+                    (
+                        user_id, 
+                        campaign_name,
+                        payment['amount']/100,  # Convert from paise to rupees
+                        data['razorpay_payment_id']
+                    )
+                )
+                conn.commit()
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE constraint" in str(e):
+                    app.logger.warning(f"Duplicate transaction: {data['razorpay_payment_id']}")
+                    return jsonify({
+                        'error': 'This transaction was already processed',
+                        'status': 'failure'
+                    }), 400
+                raise
         
-        return jsonify({'status': 'success'})
+        # 6. Return success
+        return jsonify({
+            'status': 'success',
+            'payment_id': data['razorpay_payment_id'],
+            'amount': payment['amount']/100,
+            'campaign': campaign_name
+        })
+        
+    except razorpay.errors.SignatureVerificationError as e:
+        app.logger.error(f"Signature verification failed: {str(e)}")
+        return jsonify({
+            'error': 'Payment verification failed - invalid signature',
+            'status': 'failure'
+        }), 400
         
     except Exception as e:
-        app.logger.error(f"Payment verification failed: {str(e)}")
-        return jsonify({'error': str(e), 'status': 'failure'}), 400
-    
+        app.logger.error(f"Payment verification error: {str(e)}")
+        return jsonify({
+            'error': 'Payment processing failed',
+            'status': 'failure',
+            'details': str(e)
+        }), 400
 
 @app.route('/get-donation-history')
 def get_donation_history():
