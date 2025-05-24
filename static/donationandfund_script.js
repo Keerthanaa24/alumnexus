@@ -185,7 +185,7 @@ document.getElementById("proceedToPay").addEventListener("click", async function
         const order = await response.json();
         
         const options = {
-            key: "rzp_test_ekuUcHA0UOfU6z",
+            key: window.RAZORPAY_KEY_ID || "rzp_test_ekuUcHA0UOfU6z",
             amount: order.amount,
             currency: order.currency,
             name: "Alumnexus",
