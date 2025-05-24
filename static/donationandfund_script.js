@@ -192,58 +192,33 @@ document.getElementById("proceedToPay").addEventListener("click", async function
             description: `Donation to ${campaign.name}`,
             image: "https://example.com/your_logo.jpg",
             order_id: order.id,
-            modal: {
-                ondismiss: function() {
-                    // This will be called when payment is cancelled
-                    document.getElementById("paymentStatus").innerHTML = `
-                        <div class="payment-cancelled">
-                            <p>Payment was cancelled</p>
-                            <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
-                        </div>
-                    `;
-                }
-            },
-            handler: async function(response) {
-                try {
-                    // Verify payment on server
-                    const verificationResponse = await fetch('/verify-payment', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(response)
-                    });
-            
-                    const result = await verificationResponse.json();
-            
-                    // Only if server confirms success
-                    if (result.status === 'success') {
-                        // Update local campaigns array immediately
-                        campaigns[currentCampaignIndex].raised += parseInt(amount);
-                        
-                        // Refresh campaigns from server to get accurate totals
-                        await updateCampaigns();
-                        
-                        document.getElementById("successMessage").innerHTML = `
-                            Payment Successful!<br><br>
-                            Thank you for your donation of ₹${amount} to ${campaigns[currentCampaignIndex].name}!<br>
-                            Transaction ID: ${response.razorpay_payment_id}
-                        `;
-                        modals.success.style.display = "block";
-                    } else {
-                        throw new Error("Verification failed at server");
-                    }
-                } catch (error) {
-                    console.error("Verification error:", error);
-                    document.getElementById("paymentStatus").innerHTML = `
-                        <div class="payment-error">
-                            <p>❌ Payment verification failed. Please try again.</p>
-                            <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
-                            <button onclick="showAlternativeMethods()" class="alt-method-btn">Other Payment Methods</button>
-                        </div>
-                    `;
-                }
-            },
+modal: {
+    ondismiss: function () {
+        document.getElementById("paymentStatus").innerHTML = `
+            <div class="payment-cancelled">
+                <p>❌ Payment was cancelled by the user</p>
+                <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
+            </div>
+        `;
+    }
+}
+
+handler: function(response) {
+    const amount = document.getElementById("donationAmount").value;
+
+    // Update the local data
+    campaigns[currentCampaignIndex].raised += parseInt(amount);
+
+    updateCampaigns(); // Update UI with the new raised amount
+
+    document.getElementById("successMessage").innerHTML = `
+        Payment Successful!<br><br>
+        Thank you for your donation of ₹${amount} to ${campaigns[currentCampaignIndex].name}!<br>
+        Transaction ID: ${response.razorpay_payment_id}
+    `;
+    modals.success.style.display = "block";
+}
+
             prefill: {
                 name: "Ram Kumar",
                 email: "john.doe@example.com",
