@@ -185,7 +185,7 @@ document.getElementById("proceedToPay").addEventListener("click", async function
         const order = await response.json();
         
         const options = {
-            key: window.RAZORPAY_KEY_ID || "rzp_test_ekuUcHA0UOfU6z",
+            key: "rzp_test_ekuUcHA0UOfU6z",
             amount: order.amount,
             currency: order.currency,
             name: "Alumnexus",
@@ -395,6 +395,11 @@ async function loadDonationHistory() {
         `;
     }
 }
+
+function generateReceipt(transactionId) {
+    window.open(`/generate-receipt/${transactionId}`, '_blank');
+}
+
 
 function generateReceipt(transactionId) {
     window.open(`/generate-receipt/${transactionId}`, '_blank');
