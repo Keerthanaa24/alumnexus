@@ -31,9 +31,9 @@ app = Flask(__name__)
 app.secret_key = "your_secret_key_here"  
 ADMIN_SECURITY_KEY = "admin123" 
 CORS(app, supports_credentials=True) 
-BASE_URL = "http://localhost:5000"
-RAZORPAY_KEY_ID = 'rzp_test_ekuUcHA0UOfU6z'  
-RAZORPAY_KEY_SECRET = 'KTu5xQhLEEo0FaKC0uHz2bwW'   
+BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', 'rzp_test_ekuUcHA0UOfU6z')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', 'KTu5xQhLEEo0FaKC0uHz2bwW') 
 razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 DB_PATH = Path(__file__).parent / "alumni.db"
@@ -1658,32 +1658,36 @@ def feedback():
         return render_template('feedback.html')
    
 
-@app.route('/donations')  # FIXED ROUTE NAME
+@app.route('/donations')
 def donations():
     if "user" in session:
-        return render_template('donationandfund.html')
+        return render_template('donationandfund.html', razorpay_key_id=RAZORPAY_KEY_ID)
     return redirect(url_for('home'))
 
 @app.route('/create-order', methods=['POST'])
 def create_order():
     if 'user' not in session:
+        app.logger.error('Create order failed: User not authenticated')
         return jsonify({'error': 'Not authenticated'}), 401
         
     data = request.json
-    amount = data['amount']  # Amount is expected in paise (1 INR = 100 paise)
+    amount = data['amount']
     
-    # Create a Razorpay Order
-    order_data = {
-        'amount': amount,
-        'currency': 'INR',
-        'receipt': data.get('receipt', 'donation_'+str(int(time.time()))),
-        'notes': data.get('notes', {})
-    }
+    app.logger.info(f'Creating order for amount: {amount}')
     
     try:
+        order_data = {
+            'amount': amount,
+            'currency': 'INR',
+            'receipt': data.get('receipt', 'donation_'+str(int(time.time()))),
+            'notes': data.get('notes', {})
+        }
+        
         order = razorpay_client.order.create(data=order_data)
+        app.logger.info(f'Order created successfully: {order["id"]}')
         return jsonify(order)
     except Exception as e:
+        app.logger.error(f'Order creation failed: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/verify-payment', methods=['POST'])
