@@ -58,6 +58,8 @@ def get_user_role(email):
 def init_db():
     with get_db() as conn:
         conn.executescript("""
+        PRAGMA foreign_keys = ON;
+
         CREATE TABLE IF NOT EXISTS user (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fullname TEXT NOT NULL,
@@ -1608,29 +1610,20 @@ def donations():
 
 @app.route('/create-order', methods=['POST'])
 def create_order():
-    if 'user' not in session:
-        app.logger.error('Create order failed: User not authenticated')
-        return jsonify({'error': 'Not authenticated'}), 401
+    # Add campaign validation
+    campaign_name = request.json.get('campaign_name')
+    if not campaign_name:
+        return jsonify({'error': 'Campaign selection required'}), 400
         
-    data = request.json
-    amount = data['amount']
-    
-    app.logger.info(f'Creating order for amount: {amount}')
-    
-    try:
-        order_data = {
-            'amount': amount,
-            'currency': 'INR',
-            'receipt': data.get('receipt', 'donation_'+str(int(time.time()))),
-            'notes': data.get('notes', {})
+    # Add to order notes
+    order_data = {
+        'amount': amount,
+        'currency': 'INR',
+        'notes': {
+            'campaign': campaign_name,
+            'user_id': session['user']['id']
         }
-        
-        order = razorpay_client.order.create(data=order_data)
-        app.logger.info(f'Order created successfully: {order["id"]}')
-        return jsonify(order)
-    except Exception as e:
-        app.logger.error(f'Order creation failed: {str(e)}')
-        return jsonify({'error': str(e)}), 500
+    }
 
 @app.route('/verify-payment', methods=['POST'])
 def verify_payment():
@@ -1729,14 +1722,16 @@ def get_donation_history():
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
     
-    try:
-        # Ensure user data is properly structured
-        if not isinstance(session['user'], dict):
-            session['user'] = {'id': session['user']}  # Handle case where only ID is stored
-        
-        user_id = session['user'].get('id')
-        if not user_id:
-            return jsonify({'error': 'User ID not found in session'}), 400
+    # Ensure consistent session structure
+    if not isinstance(session['user'], dict):
+        with get_db() as conn:
+            user = conn.execute(
+                "SELECT id, email FROM user WHERE id = ?", 
+                (session['user'],)
+            ).fetchone()
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            session['user'] = dict(user)
         
         with get_db() as conn:
             # Explicitly convert rows to dictionaries
