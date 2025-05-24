@@ -30,7 +30,16 @@ conn = sqlite3.connect("alumni.db")
 app = Flask(__name__)
 app.secret_key = "your_secret_key_here"  
 ADMIN_SECURITY_KEY = "admin123" 
-CORS(app, supports_credentials=True) 
+CORS(app, 
+     supports_credentials=True,
+     resources={
+         r"/*": {
+             "origins": [
+                 "http://localhost:5000",
+                 "https://alumnexus-2rsl.onrender.com"
+             ]
+         }
+     })
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
 RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', 'rzp_test_ekuUcHA0UOfU6z')
 RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', 'KTu5xQhLEEo0FaKC0uHz2bwW') 
