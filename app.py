@@ -228,15 +228,24 @@ def init_db():
             read BOOLEAN DEFAULT 0,
             FOREIGN KEY(user_id) REFERENCES user(id)
         );                 
+        CREATE TABLE IF NOT EXISTS campaigns (
+            name TEXT PRIMARY KEY,
+            description TEXT,
+            target INTEGER,
+            raised INTEGER DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS donations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES user(id),
-            campaign_name TEXT NOT NULL,
-            amount REAL NOT NULL,
-            transaction_id TEXT NOT NULL UNIQUE,
-            donation_date TEXT DEFAULT CURRENT_TIMESTAMP,
-            receipt_generated BOOLEAN DEFAULT 0
-        );   
+            user_id INTEGER,
+            campaign_name TEXT,
+            amount INTEGER,
+            donation_date TEXT,
+            transaction_id TEXT,
+            FOREIGN KEY (user_id) REFERENCES user(id),
+            FOREIGN KEY (campaign_name) REFERENCES campaigns(name)
+        );
+
         CREATE TABLE IF NOT EXISTS event_reminders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES user(id),
@@ -1630,83 +1639,26 @@ def create_order():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/verify-payment', methods=['POST'])
-def verify_payment():
-    if 'user' not in session:
-        return jsonify({'error': 'Not authenticated'}), 401
-        
-    data = request.json
-    
-    try:
-        # First verify the payment signature
-        razorpay_client.utility.verify_payment_signature({
-            'razorpay_order_id': data['razorpay_order_id'],
-            'razorpay_payment_id': data['razorpay_payment_id'],
-            'razorpay_signature': data['razorpay_signature']
-        })
-        
-        # Then check the payment status
-        payment = razorpay_client.payment.fetch(data['razorpay_payment_id'])
-        if payment['status'] != 'captured':
-            return jsonify({'error': 'Payment not captured', 'status': 'failure'}), 400
-        
-        # Get the order details
-        order = razorpay_client.order.fetch(data['razorpay_order_id'])
-        
-        # Record the donation only if payment was successful
-        with get_db() as conn:
-            conn.execute(
-                "INSERT INTO donations (user_id, campaign_name, amount, transaction_id) VALUES (?, ?, ?, ?)",
-                (session['user']['id'], 
-                 order['notes']['campaign'], 
-                 order['amount']/100,  # Convert from paise to rupees
-                 data['razorpay_payment_id'])
-            )
-            conn.commit()
-        
-        return jsonify({'status': 'success'})
-        
-    except Exception as e:
-        print(f"Payment verification error: {str(e)}")
-        return jsonify({'error': str(e), 'status': 'failure'}), 400
-    
-
 @app.route('/get-donation-history')
 def get_donation_history():
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
+
     try:
-        # Ensure user data is properly structured
-        if not isinstance(session['user'], dict):
-            session['user'] = {'id': session['user']}  # Handle case where only ID is stored
-        
-        user_id = session['user'].get('id')
-        if not user_id:
-            return jsonify({'error': 'User ID not found in session'}), 400
-        
+        user = session['user']
+        user_id = user['id']
+
         with get_db() as conn:
-            # Explicitly convert rows to dictionaries
-            donations = conn.execute(
-                "SELECT campaign_name, amount, transaction_id, donation_date FROM donations WHERE user_id = ? ORDER BY donation_date DESC",
-                (user_id,)
-            ).fetchall()
-            
-            # Convert each row to a dictionary properly
-            donations_list = []
-            for donation in donations:
-                donations_list.append({
-                    'campaign_name': donation[0],
-                    'amount': donation[1],
-                    'transaction_id': donation[2],
-                    'donation_date': donation[3]
-                })
-            
-        return jsonify(donations_list)
-        
+            donations = conn.execute('''
+                SELECT campaign_name, amount, donation_date, transaction_id
+                FROM donations
+                WHERE user_id = ?
+                ORDER BY donation_date DESC
+            ''', (user_id,)).fetchall()
+
+        return jsonify([dict(donation) for donation in donations])
     except Exception as e:
-        print(f"Error in get_donation_history: {str(e)}")
-        return jsonify({'error': 'Server error', 'details': str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/generate-receipt/<transaction_id>')
@@ -1732,33 +1684,44 @@ def generate_receipt(transaction_id):
         download_name=f"Receipt_{transaction_id}.pdf"
     )
     
-@app.route('/test-donation-history')
-def test_donation_history():
-    # Simulate logged in user (test@example.com has id=1)
-    with get_db() as conn:
-        user = conn.execute("SELECT * FROM user WHERE email='test@example.com'").fetchone()
-        if user:
-            session['user'] = dict(user)
-            return redirect(url_for('donations'))
-    return "Test user not found", 404
-
 @app.route('/get-campaign-totals')
 def get_campaign_totals():
+    with get_db() as conn:
+        campaigns = conn.execute('SELECT name, raised FROM campaigns').fetchall()
+    return jsonify({c['name']: c['raised'] for c in campaigns})
+
+
+@app.route('/payment-success', methods=['POST'])
+def payment_success():
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    data = request.json
+    required_fields = ['razorpay_payment_id', 'order_id', 'amount', 'campaign_name']
+    if not all(field in data for field in required_fields):
+        return jsonify({'error': 'Missing required fields'}), 400
+
     try:
+        user_id = session['user']['id']
         with get_db() as conn:
-            # Get total raised for each campaign
-            campaigns = conn.execute(
-                "SELECT campaign_name, SUM(amount) as total_raised FROM donations GROUP BY campaign_name"
-            ).fetchall()
-            
-            # Convert to dictionary for easy access
-            campaign_totals = {campaign['campaign_name']: campaign['total_raised'] for campaign in campaigns}
-            
-        return jsonify(campaign_totals)
-        
+            # Log donation
+            conn.execute('''
+                INSERT INTO donations (user_id, campaign_name, amount, donation_date, transaction_id)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, data['campaign_name'], data['amount'], datetime.utcnow(), data['razorpay_payment_id']))
+
+            # Update campaign raised amount
+            conn.execute('''
+                UPDATE campaigns
+                SET raised = raised + ?
+                WHERE name = ?
+            ''', (data['amount'], data['campaign_name']))
+
+        return jsonify({'success': True}), 200
     except Exception as e:
-        print(f"Error getting campaign totals: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
     
 @app.route('/success_stories')
 def success_stories():
