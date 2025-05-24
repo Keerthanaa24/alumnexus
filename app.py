@@ -1627,135 +1627,38 @@ def create_order():
 
 @app.route('/verify-payment', methods=['POST'])
 def verify_payment():
-    if 'user' not in session or not isinstance(session['user'], dict):
-        return jsonify({'error': 'Not authenticated or invalid session', 'status': 'failure'}), 401
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated', 'status': 'failure'}), 401
         
-    data = request.json
+    # Ensure user_id exists in session and database
+    user_id = session.get('user', {}).get('id')
+    if not user_id:
+        return jsonify({'error': 'Invalid user session', 'status': 'failure'}), 400
     
-    # Validate required fields
-    required_fields = ['razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature']
-    if not all(field in data for field in required_fields):
-        return jsonify({'error': 'Missing payment verification data', 'status': 'failure'}), 400
-    
-    try:
-        # 1. Verify payment signature
-        razorpay_client.utility.verify_payment_signature({
-            'razorpay_order_id': data['razorpay_order_id'],
-            'razorpay_payment_id': data['razorpay_payment_id'],
-            'razorpay_signature': data['razorpay_signature']
-        })
-        
-        # 2. Verify payment status
-        payment = razorpay_client.payment.fetch(data['razorpay_payment_id'])
-        if payment['status'] != 'captured':
-            app.logger.warning(f"Payment not captured: {payment}")
-            return jsonify({'error': 'Payment not captured', 'status': 'failure'}), 400
-        
-        # 3. Get and validate user
-        user_id = session['user'].get('id')
-        if not user_id:
-            return jsonify({'error': 'User ID not found in session', 'status': 'failure'}), 400
-        
-        # 4. Verify user exists and get campaign name
-        with get_db() as conn:
-            # Verify user exists
-            user = conn.execute(
-                "SELECT id FROM user WHERE id = ?", 
-                (user_id,)
-            ).fetchone()
-            
-            if not user:
-                return jsonify({'error': 'User does not exist', 'status': 'failure'}), 400
-            
-            # Get campaign name from order notes or fallback
-            order = razorpay_client.order.fetch(data['razorpay_order_id'])
-            campaign_name = order.get('notes', {}).get('campaign', 'General Donation')
-            
-            # 5. Record the donation
-            try:
-                conn.execute(
-                    """INSERT INTO donations 
-                    (user_id, campaign_name, amount, transaction_id) 
-                    VALUES (?, ?, ?, ?)""",
-                    (
-                        user_id, 
-                        campaign_name,
-                        payment['amount']/100,  # Convert from paise to rupees
-                        data['razorpay_payment_id']
-                    )
-                )
-                conn.commit()
-            except sqlite3.IntegrityError as e:
-                if "UNIQUE constraint" in str(e):
-                    app.logger.warning(f"Duplicate transaction: {data['razorpay_payment_id']}")
-                    return jsonify({
-                        'error': 'This transaction was already processed',
-                        'status': 'failure'
-                    }), 400
-                raise
-        
-        # 6. Return success
-        return jsonify({
-            'status': 'success',
-            'payment_id': data['razorpay_payment_id'],
-            'amount': payment['amount']/100,
-            'campaign': campaign_name
-        })
-        
-    except razorpay.errors.SignatureVerificationError as e:
-        app.logger.error(f"Signature verification failed: {str(e)}")
-        return jsonify({
-            'error': 'Payment verification failed - invalid signature',
-            'status': 'failure'
-        }), 400
-        
-    except Exception as e:
-        app.logger.error(f"Payment verification error: {str(e)}")
-        return jsonify({
-            'error': 'Payment processing failed',
-            'status': 'failure',
-            'details': str(e)
-        }), 400
+    with get_db() as conn:
+        # Verify user exists before processing donation
+        user = conn.execute("SELECT id FROM user WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return jsonify({'error': 'User not found', 'status': 'failure'}), 404
+
 
 @app.route('/get-donation-history')
 def get_donation_history():
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
     
-    # Ensure consistent session structure
-    if not isinstance(session['user'], dict):
-        with get_db() as conn:
-            user = conn.execute(
-                "SELECT id, email FROM user WHERE id = ?", 
-                (session['user'],)
-            ).fetchone()
-            if not user:
-                return jsonify({'error': 'User not found'}), 404
-            session['user'] = dict(user)
+    # Ensure user_id is properly retrieved
+    user_id = session.get('user', {}).get('id')
+    if not user_id:
+        return jsonify({'error': 'User ID not found in session'}), 400
+    
+    with get_db() as conn:
+        donations = conn.execute(
+            "SELECT campaign_name, amount, transaction_id, donation_date FROM donations WHERE user_id = ? ORDER BY donation_date DESC",
+            (user_id,)
+        ).fetchall()
         
-        with get_db() as conn:
-            # Explicitly convert rows to dictionaries
-            donations = conn.execute(
-                "SELECT campaign_name, amount, transaction_id, donation_date FROM donations WHERE user_id = ? ORDER BY donation_date DESC",
-                (user_id,)
-            ).fetchall()
-            
-            # Convert each row to a dictionary properly
-            donations_list = []
-            for donation in donations:
-                donations_list.append({
-                    'campaign_name': donation[0],
-                    'amount': donation[1],
-                    'transaction_id': donation[2],
-                    'donation_date': donation[3]
-                })
-            
-        return jsonify(donations_list)
-        
-    except Exception as e:
-        print(f"Error in get_donation_history: {str(e)}")
-        return jsonify({'error': 'Server error', 'details': str(e)}), 500
-
+        return jsonify([dict(donation) for donation in donations])
 
 @app.route('/generate-receipt/<transaction_id>')
 def generate_receipt(transaction_id):
