@@ -203,70 +203,40 @@ modal: {
     }
 }
 
-handler: function(response) {
+handler: async function(response) {
     const amount = document.getElementById("donationAmount").value;
+    const campaign = campaigns[currentCampaignIndex];
 
-    // Update the local data
+    try {
+        const res = await fetch('/payment-success', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                razorpay_payment_id: response.razorpay_payment_id,
+                order_id: response.razorpay_order_id,
+                amount: parseInt(amount),
+                campaign_name: campaign.name
+            })
+        });
+
+        if (!res.ok) throw new Error('Failed to log donation');
+    } catch (err) {
+        console.error("Failed to log donation:", err);
+    }
+
+    // Update local state/UI
     campaigns[currentCampaignIndex].raised += parseInt(amount);
-
-    updateCampaigns(); // Update UI with the new raised amount
+    updateCampaigns();
 
     document.getElementById("successMessage").innerHTML = `
         Payment Successful!<br><br>
-        Thank you for your donation of ₹${amount} to ${campaigns[currentCampaignIndex].name}!<br>
+        Thank you for your donation of ₹${amount} to ${campaign.name}!<br>
         Transaction ID: ${response.razorpay_payment_id}
     `;
     modals.success.style.display = "block";
 }
-
-            prefill: {
-                name: "Ram Kumar",
-                email: "john.doe@example.com",
-                contact: "9876543210"
-            },
-            notes: {
-                campaign: campaign.name
-            },
-            theme: {
-                color: "#3399cc"
-            }
-        };
-        
-        const rzp = new Razorpay(options);
-
-        rzp.on('payment.failed', function (response) {
-            console.error("❌ Payment Failed", response);
-            let errorMsg = response.error.description || "Unknown error";
-            
-            // Check if this was a user cancellation
-            if (response.error.code === 'payment_cancelled') {
-                errorMsg = "Payment was cancelled by user";
-            }
-            
-            document.getElementById("paymentStatus").innerHTML = `
-                <div class="payment-error">
-                    <p>Payment failed ❌</p>
-                    <p>Reason: ${errorMsg}</p>
-                    <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
-                    <button onclick="showAlternativeMethods()" class="alt-method-btn">Other Payment Methods</button>
-                </div>
-            `;
-            modals.success.style.display = "none";
-        });
-        
-        rzp.open();
-        
-    } catch (error) {
-        console.error("Payment error:", error);
-        document.getElementById("paymentStatus").innerHTML = `
-            <div class="payment-error">
-                <p>Payment processing failed. Please try again.</p>
-                <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
-                <button onclick="showAlternativeMethods()" class="alt-method-btn">Other Payment Methods</button>
-            </div>
-        `;
-    }
-});
 
 // Retry payment function
 function retryPayment() {
