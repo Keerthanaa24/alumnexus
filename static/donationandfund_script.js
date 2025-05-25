@@ -203,7 +203,35 @@ document.getElementById("proceedToPay").addEventListener("click", async function
                     `;
                 }
             },
-
+            handler: function(response) {
+                // Update local campaigns array immediately
+                campaigns[currentCampaignIndex].raised += parseInt(amount);
+                
+                // Refresh campaigns from server to get accurate totals
+                updateCampaigns();
+                
+                document.getElementById("successMessage").innerHTML = `
+                    Payment Successful!<br><br>
+                    Thank you for your donation of ₹${amount} to ${campaigns[currentCampaignIndex].name}!<br>
+                    Transaction ID: ${response.razorpay_payment_id}
+                `;
+                modals.success.style.display = "block";
+                
+                // Reload donation history to show the new donation
+                loadDonationHistory();
+            },
+            prefill: {
+                name: "Ram Kumar",
+                email: "john.doe@example.com",
+                contact: "9876543210"
+            },
+            notes: {
+                campaign: campaign.name
+            },
+            theme: {
+                color: "#3399cc"
+            }
+        };
         
         const rzp = new Razorpay(options);
 
@@ -278,7 +306,6 @@ document.getElementById("searchBar").addEventListener("input", function (e) {
     });
 });
 
-// Initialize with some sample campaigns
 // Initialize campaigns when page loads
 document.addEventListener('DOMContentLoaded', async function() {
     // Default campaigns (fallback if API fails)
