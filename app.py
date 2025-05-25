@@ -155,13 +155,6 @@ def init_db():
             UNIQUE(job_id, applicant_email)
         );
 
-        CREATE TABLE IF NOT EXISTS password_reset_token (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES user(id),
-            token TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            used BOOLEAN DEFAULT 0
-        );
         CREATE TABLE IF NOT EXISTS skill (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -230,12 +223,12 @@ def init_db():
         );                 
         CREATE TABLE IF NOT EXISTS donations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES user(id),
+            user_id INTEGER NOT NULL,
             campaign_name TEXT NOT NULL,
             amount REAL NOT NULL,
             transaction_id TEXT NOT NULL UNIQUE,
             donation_date TEXT DEFAULT CURRENT_TIMESTAMP,
-            receipt_generated BOOLEAN DEFAULT 0
+            receipt_generated BOOLEAN DEFAULT 0,
             FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE
 
         );  
