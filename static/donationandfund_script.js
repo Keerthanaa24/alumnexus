@@ -268,7 +268,44 @@ document.getElementById("proceedToPay").addEventListener("click", async function
         `;
     }
 });
-
+handler: async function(response) {
+    try {
+        // Send payment data to backend
+        const saveResponse = await fetch('/payment-success', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                campaign: campaign.name,
+                amount: amount * 100, // in paise
+                transaction_id: response.razorpay_payment_id
+            })
+        });
+        
+        if (!saveResponse.ok) throw new Error('Failed to save donation');
+        
+        // Update UI
+        campaigns[currentCampaignIndex].raised += parseInt(amount);
+        updateCampaigns();
+        
+        document.getElementById("successMessage").innerHTML = `
+            Payment Successful!<br><br>
+            Thank you for your donation of ₹${amount} to ${campaign.name}!<br>
+            Transaction ID: ${response.razorpay_payment_id}
+        `;
+        modals.success.style.display = "block";
+        loadDonationHistory(); // Refresh history
+    } catch (error) {
+        console.error("Payment processing error:", error);
+        // Show error but keep payment success visible
+        document.getElementById("successMessage").innerHTML += `
+            <div class="warning">
+                Note: There was an issue saving your donation record. Please contact support with transaction ID.
+            </div>
+        `;
+    }
+}
 // Retry payment function
 function retryPayment() {
     document.getElementById("paymentStatus").innerHTML = "";
