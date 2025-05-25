@@ -1744,26 +1744,55 @@ def get_donation_history():
 
 @app.route('/generate-receipt/<transaction_id>')
 def generate_receipt(transaction_id):
-    # EMERGENCY OVERRIDE - Generates receipt without DB check
-    buffer = BytesIO()
-    p = canvas.Canvas(buffer)
+    if 'user' not in session:
+        return redirect(url_for('login'))
     
-    p.drawString(100, 800, "DONATION RECEIPT")
-    p.drawString(100, 780, f"Transaction ID: {transaction_id}")
-    p.drawString(100, 760, "Date: " + datetime.now().strftime("%Y-%m-%d"))
-    p.drawString(100, 740, "Status: Verified Payment")
-    p.drawString(100, 720, "Thank you for your donation!")
-    
-    p.showPage()
-    p.save()
-    
-    buffer.seek(0)
-    return send_file(
-        buffer,
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f"Receipt_{transaction_id}.pdf"
-    )
+    try:
+        with get_db() as conn:
+            donation = conn.execute("""
+                SELECT d.*, u.fullname, u.email 
+                FROM donations d
+                JOIN user u ON d.user_id = u.id
+                WHERE d.transaction_id = ? AND d.user_id = ?
+            """, (transaction_id, session['user'].get('id'))).fetchone()
+            
+            if not donation:
+                return "Receipt not found", 404
+                
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer)
+            
+            # Professional receipt layout
+            p.setFont("Helvetica-Bold", 16)
+            p.drawString(100, 800, "ALUMNEXUS DONATION RECEIPT")
+            p.line(100, 790, 500, 790)
+            
+            p.setFont("Helvetica", 12)
+            p.drawString(100, 760, f"Receipt No: {donation['transaction_id']}")
+            p.drawString(100, 740, f"Date: {donation['donation_date'][:10]}")
+            
+            p.drawString(100, 700, f"Donor: {donation['fullname']}")
+            p.drawString(100, 680, f"Email: {donation['email']}")
+            
+            p.drawString(100, 640, f"Campaign: {donation['campaign_name']}")
+            p.drawString(100, 620, f"Amount: ₹{donation['amount']:.2f}")
+            
+            p.drawString(100, 580, "Thank you for your generous donation!")
+            p.drawString(100, 560, "This receipt serves as official documentation for tax purposes.")
+            
+            p.showPage()
+            p.save()
+            
+            buffer.seek(0)
+            return send_file(
+                buffer,
+                mimetype='application/pdf',
+                as_attachment=True,
+                download_name=f"Alumnexus_Receipt_{transaction_id}.pdf"
+            )
+    except Exception as e:
+        print(f"Error generating receipt: {str(e)}")
+        return "Error generating receipt", 500
     
 @app.route('/get-campaign-totals')
 def get_campaign_totals():
