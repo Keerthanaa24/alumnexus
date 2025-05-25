@@ -423,7 +423,7 @@ def login():
     with get_db() as conn:
         # Get user with all needed columns
         user = conn.execute(
-            "SELECT id, email, password_hash, active, failed_attempts, last_failed_attempt, role, fullname FROM user WHERE email = ?", 
+            "SELECT id, email, password_hash, active, failed_attempts, last_failed_attempt FROM user WHERE email = ?", 
             (email,)
         ).fetchone()
 
@@ -441,18 +441,10 @@ def login():
                 (user['id'],)
             )
             conn.commit()
-            
-            # Improved session structure - maintains all existing security
-            session["user"] = {
-                "id": user['id'],
-                "email": user['email'],
-                "role": user['role'],
-                "name": user['fullname']
-            }
-            
+            session["user"] = user['email']
             return jsonify(success=True, redirect=url_for('dashboard'))
 
-        # REST OF YOUR EXISTING FAILED LOGIN LOGIC REMAINS EXACTLY THE SAME
+        # Only process failed attempts if password was wrong
         current_time = datetime.now()
         timeout_minutes = 5  # Changed to 5 minutes as requested
         
@@ -490,9 +482,8 @@ def login():
             (new_attempts, current_time.isoformat(), user['id'])
         )
         conn.commit()
-
+        
         return jsonify(success=False, message="Incorrect username or password")
-
 @app.route('/dashboard')
 def dashboard():
     if "user" not in session:
