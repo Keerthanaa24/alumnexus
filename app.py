@@ -2492,7 +2492,7 @@ def verify_admin_key():
 @app.route('/dashfeed')
 def dashfeed():
     if "user" in session:
-        return render_template('dashfeed.html'
+        return render_template('dashfeed.html')
 
 @app.route('/events_admin')
 def events_admin():
