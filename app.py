@@ -228,23 +228,15 @@ def init_db():
             read BOOLEAN DEFAULT 0,
             FOREIGN KEY(user_id) REFERENCES user(id)
         );                 
-        CREATE TABLE IF NOT EXISTS campaigns (
-            name TEXT PRIMARY KEY,
-            description TEXT,
-            target INTEGER,
-            raised INTEGER DEFAULT 0
-        );
-
         CREATE TABLE IF NOT EXISTS donations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            campaign_name TEXT,
-            amount INTEGER,
-            donation_date TEXT,
-            transaction_id TEXT,
-            FOREIGN KEY (user_id) REFERENCES user(id),
-            FOREIGN KEY (campaign_name) REFERENCES campaigns(name)
-        );
+            user_id INTEGER NOT NULL REFERENCES user(id),
+            campaign_name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            transaction_id TEXT NOT NULL UNIQUE,
+            donation_date TEXT DEFAULT CURRENT_TIMESTAMP,
+            receipt_generated BOOLEAN DEFAULT 0
+        );  
 
         CREATE TABLE IF NOT EXISTS event_reminders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -517,6 +509,8 @@ def dashboard():
 
         user_id = current_user['id']
         print(f"Current user ID: {user_id}")
+
+        # Get suggested alumni connections (full details, excluding already connected users)
         suggested_connections = conn.execute("""
             SELECT u.* FROM user u
             LEFT JOIN user_block b ON (b.blocker_id = ? AND b.blocked_id = u.id)
@@ -524,7 +518,7 @@ def dashboard():
                 AND u.verified = 1
                 AND u.active = 1
                 AND u.role = 'Alumni'
-                AND (u.privacy = 'public' OR u.privacy IS NULL)  -- Only public profiles
+                AND (u.privacy = 'public' OR u.privacy IS NULL)
                 AND b.id IS NULL
                 AND u.id NOT IN (
                     SELECT CASE
@@ -638,97 +632,162 @@ def get_notifications():
 
 @app.route('/profile', methods=['GET', 'POST'])
 def profile():
-    if 'user' not in session:
+    if "user" not in session:
         return redirect(url_for('login'))
 
-    if request.method == 'POST':
-        try:
-            # Get form data
-            first_name = request.form.get("first_name", "").strip()
-            last_name = request.form.get("last_name", "").strip()
-            department = request.form.get("department", "").strip()
-            new_email = request.form.get("email", "").strip().lower()
-            resume = request.files.get("resume")
-            avatar = request.files.get("avatar")
-            user_id = session['user']['id']
-            session_email = session['user']['email']
+    session_email = session["user"]
 
-            with get_db() as conn:
-                # Get current user data
-                current_user = conn.execute(
-                    "SELECT * FROM user WHERE id = ?", 
-                    (user_id,)
-                ).fetchone()
+    if request.method == 'GET':
+        with get_db() as conn:
+            user = conn.execute("SELECT * FROM user WHERE email = ?", (session_email,)).fetchone()
+            if not user:
+                return redirect(url_for('login'))
 
-                # Check for duplicate email (excluding current user)
-                if new_email != session_email:
-                    existing = conn.execute(
-                        "SELECT * FROM user WHERE email = ? AND id != ?", 
-                        (new_email, user_id)
-                    ).fetchone()
-                    if existing:
-                        return jsonify(success=False, message="This email is already registered with another account.")
-                
-                # Validate profile picture: Check if avatar is provided or already exists in the current user
-                if not avatar and not current_user['avatar']:
-                    return jsonify(success=False, message="Please upload a profile picture.")
+            user = dict(user)
+            if user["avatar"]:
+                user["avatar"] = base64.b64encode(user["avatar"]).decode("utf-8")
+            
+            # Get role from user data
+            role = user['role']
+            
+            resume_url = None
+            if user["resume"]:
+                resume_url = "/download_resume/{}".format(user['id'])
 
-                # If avatar is uploaded, use it, otherwise retain the current user's avatar
-                resume_data = resume.read() if resume else current_user.get('resume')
-                avatar_data = avatar.read() if avatar else current_user['avatar']
+            skills = conn.execute("SELECT name, percentage FROM skill WHERE user_id = ?", (user['id'],)).fetchall()
 
-                privacy = request.form.get("privacy", "public").strip()
+            # Get sessions based on role - modified to use new table structure
+            if role.lower() == 'student':
+                sessions = conn.execute("""
+                    SELECT ms.session_id, ms.session_time as session_start_time, 
+                        ms.session_description, ms.mentor_name,
+                        ms.mentor_image
+                    FROM mentor_session ms
+                    JOIN session_member sm ON ms.session_id = sm.session_id
+                    WHERE sm.student_id = ?
+                """, (user['id'],)).fetchall()
+            else:  # Alumni
+                sessions = conn.execute("""
+                    SELECT session_id, session_time as session_start_time, 
+                           session_description, mentor_name, mentor_field,
+                           mentor_image
+                    FROM mentor_session
+                    WHERE alumni_id = ?
+                """, (user['id'],)).fetchall()
 
-                # Update user data
-                conn.execute('''
-                    UPDATE user SET
-                        first_name = ?,
-                        last_name = ?,
-                        department = ?,
-                        email = ?,
-                        resume = ?,
-                        avatar = ?,
-                        privacy = ?
-                    WHERE id = ?
-                ''', (
-                    first_name,
-                    last_name,
-                    department,
-                    new_email,
-                    resume_data,
-                    avatar_data if avatar_data else current_user.get('avatar'),  # Keep existing if no new upload
-                    privacy,
-                    user_id
-                ))
+            # Get accepted connections
+            connections = conn.execute("""
+                SELECT u.id, u.fullname, u.graduation_year, p.current_job, p.company 
+                FROM connection c
+                JOIN user u ON (c.sender_id = u.id OR c.receiver_id = u.id) AND u.id != ?
+                LEFT JOIN profile p ON u.id = p.user_id
+                WHERE (c.sender_id = ? OR c.receiver_id = ?) AND c.status = 'accepted'
+            """, (user['id'], user['id'], user['id'])).fetchall()
 
-                conn.commit()
+            return render_template('profile.html', 
+                user=user, 
+                skills=skills, 
+                resume_url=resume_url,
+                role=role,
+                sessions=sessions,
+                connections=connections
+            )
+    
+    # POST request handling remains exactly the same
+    first_name = request.form.get("first_name", "").strip()
+    last_name = request.form.get("last_name", "").strip()
+    department = request.form.get("department", "").strip()
+    new_email = request.form.get("email", "").strip()
+    privacy = request.form.get("privacy", "public").strip()
+    resume = request.files.get("resume")
+    avatar = request.files.get("avatar")
 
-                # Save updated skills
-                skills_data = request.form.get("skills", "[]")
-                skills = json.loads(skills_data)
+    # Validate required fields
+    required_fields = {
+        "First Name": first_name,
+        "Last Name": last_name,
+        "Department": department,
+        "Email": new_email
+    }
+    
+    missing_fields = [field for field, value in required_fields.items() if not value]
+    if missing_fields:
+        return jsonify(
+            success=False,
+            message=f"Please fill all required fields: {', '.join(missing_fields)}"
+        )
 
-                conn.execute("DELETE FROM skill WHERE user_id = ?", (user_id,))
-                for skill in skills:
-                    name = skill.get("name")
-                    percentage = int(skill.get("percentage", 0))
-                    conn.execute(
-                        "INSERT INTO skill (user_id, name, percentage) VALUES (?, ?, ?)", 
-                        (user_id, name, percentage)
-                    )
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT * FROM user WHERE email = ?", (session_email,)).fetchone()
+            if not row:
+                return jsonify(success=False, message="User not found.")
+            current_user = dict(row)
 
-                conn.commit()
+            user_id = current_user['id']
 
-            # Update session if email changed
+            # Check for duplicate email (excluding current user)
             if new_email != session_email:
-                session["user"]["email"] = new_email
+                existing = conn.execute("SELECT * FROM user WHERE email = ? AND id != ?", (new_email, user_id)).fetchone()
+                if existing:
+                    return jsonify(success=False, message="This email is already registered with another account.")
+                
+            # Validate profile picture: Check if avatar is provided or already exists in the current user
+            if not avatar and not current_user['avatar']:
+                return jsonify(success=False, message="Please upload a profile picture.")
 
-            return jsonify(success=True, message="Profile updated successfully.")
+            # If avatar is uploaded, use it, otherwise retain the current user's avatar
+            resume_data = resume.read() if resume else current_user.get('resume')
+            avatar_data = avatar.read() if avatar else current_user['avatar']
 
-        except IntegrityError:
-            return jsonify(success=False, message="A user with this email already exists.")
-        except Exception as e:
-            return jsonify(success=False, message=f"An error occurred: {str(e)}")
+            privacy = request.form.get("privacy", "public").strip()
 
+            # Update user data
+            conn.execute('''
+                UPDATE user SET
+                    first_name = ?,
+                    last_name = ?,
+                    department = ?,
+                    email = ?,
+                    resume = ?,
+                    avatar = ?,
+                    privacy = ?
+                WHERE id = ?
+            ''', (
+                first_name,
+                last_name,
+                department,
+                new_email,
+                resume_data,
+                avatar_data if avatar_data else current_user.get('avatar'),  # Keep existing if no new upload
+                privacy,
+                user_id
+            ))
+
+            conn.commit()
+
+            # 👉 Save updated skills
+            skills_data = request.form.get("skills", "[]")
+            skills = json.loads(skills_data)
+
+            conn.execute("DELETE FROM skill WHERE user_id = ?", (user_id,))
+            for skill in skills:
+                name = skill.get("name")
+                percentage = int(skill.get("percentage", 0))
+                conn.execute("INSERT INTO skill (user_id, name, percentage) VALUES (?, ?, ?)", (user_id, name, percentage))
+
+            conn.commit()
+
+        # Update session if email changed
+        session["user"] = new_email
+
+        return jsonify(success=True, message="Profile updated successfully.")
+
+    except IntegrityError:
+        return jsonify(success=False, message="A user with this email already exists.")
+    except Exception as e:
+        return jsonify(success=False, message=f"An error occurred: {str(e)}")
+    
 @app.route('/create_mentor_session', methods=['POST'])
 def create_mentor_session():
     if 'user' not in session:
@@ -838,16 +897,16 @@ def get_alumni():
         current_user = conn.execute("SELECT id FROM user WHERE email = ?", (session["user"],)).fetchone()
         if not current_user:
             return jsonify([])
+        
+        # Base query
         query = """
             SELECT u.id, u.fullname, u.graduation_year, p.current_job, p.company 
             FROM user u
             LEFT JOIN profile p ON u.id = p.user_id
-            WHERE u.email != ? 
-            AND u.role = 'Alumni'
-            AND (u.privacy = 'public' OR u.privacy IS NULL)
+            WHERE u.email != ? AND u.role = 'Alumni'
         """
         params = [session["user"]]
-       
+        
         # Add search conditions if query exists
         if search_query:
             query += """
@@ -1196,65 +1255,43 @@ def get_cancelled_events_for_user():
             return jsonify([])
     
 @app.route('/api/events/<int:event_id>', methods=['DELETE'])
-def cancel_event(event_id):  # Rename from delete_event to match frontend expectation
+def delete_event(event_id):
     if 'user' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
         
     try:
         with get_db() as conn:
-            # 1. Get event details first
-            event = conn.execute("""
-                SELECT id, title, start_time, location, description 
-                FROM event 
-                WHERE id = ?
-            """, (event_id,)).fetchone()
-            
+            # Get event details
+            event = conn.execute("SELECT * FROM event WHERE id = ?", (event_id,)).fetchone()
             if not event:
                 return jsonify({'error': 'Event not found'}), 404
             
-            print(f"Cancelling event {event_id} ({event['title']})")
+            print(f"DEBUG: Cancelling event: {event['title']} (ID: {event_id})")  # Debug log
             
-            # 2. Insert into cancelled_events with all details
-            conn.execute("""
-                INSERT INTO cancelled_events 
-                (event_id, title, start_time, location, description)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                event['id'], 
-                event['title'],
-                event['start_time'],
-                event['location'],
-                event['description']
-            ))
+            # Get RSVP'd users
+            rsvp_users = conn.execute("SELECT user_id FROM rsvp WHERE event_id = ?", (event_id,)).fetchall()
+            print(f"DEBUG: Found {len(rsvp_users)} RSVP'd users")  # Debug log
             
-            # 3. Get RSVP'd users
-            rsvp_users = conn.execute("""
-                SELECT u.id, u.email FROM user u
-                JOIN rsvp r ON u.id = r.user_id
-                WHERE r.event_id = ?
-            """, (event_id,)).fetchall()
-            print(f"Users to notify: {[u['email'] for u in rsvp_users]}")
-            
-            # 4. Create notifications
+            # Create notifications
             for user in rsvp_users:
+                user_id = user['user_id']
+                message = f"Event '{event['title']}' has been cancelled."
+                print(f"DEBUG: Creating notification for user {user_id}: {message}")  # Debug log
                 conn.execute("""
                     INSERT INTO notifications (user_id, message)
                     VALUES (?, ?)
-                """, (user['id'], f"Event cancelled: {event['title']}"))
+                """, (user_id, message))
             
-            # 5. Clean up
+            # Delete the event and RSVPs
             conn.execute("DELETE FROM event WHERE id = ?", (event_id,))
             conn.execute("DELETE FROM rsvp WHERE event_id = ?", (event_id,))
             conn.commit()
             
-            return jsonify({
-                'message': 'Event cancelled successfully',
-                'cancelled_event': dict(event)
-            })
+            print("DEBUG: Event cancellation completed successfully")  # Debug log
+            return jsonify({'success': True}), 200
             
     except Exception as e:
-        conn.rollback()
-        print(f"Error cancelling event: {str(e)}")
+        print(f"ERROR in event cancellation: {str(e)}")  # Debug log
         return jsonify({'error': str(e)}), 500
         
 @app.route('/test-cancelled')
@@ -1594,7 +1631,7 @@ def search():
     with get_db() as conn:
         jobs = conn.execute("SELECT * FROM job WHERE active=1 ORDER BY posted_at DESC").fetchall()
 
-    # Apply filtering manually in Python
+    
     filtered_jobs = []
     for job in jobs:
         if (
@@ -1609,12 +1646,10 @@ def search():
 def feedback():
     if "user" in session:
         return render_template('feedback.html')
-   
-
-@app.route('/donations')
+@app.route('/donations')  
 def donations():
     if "user" in session:
-        return render_template('donationandfund.html', razorpay_key_id=RAZORPAY_KEY_ID)
+        return render_template('donationandfund.html')
     return redirect(url_for('home'))
 
 @app.route('/create-order', methods=['POST'])
@@ -1639,26 +1674,43 @@ def create_order():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/get-donation-history')
 def get_donation_history():
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-
+    
     try:
-        user = session['user']
-        user_id = user['id']
-
+        # Ensure user data is properly structured
+        if not isinstance(session['user'], dict):
+            session['user'] = {'id': session['user']}  # Handle case where only ID is stored
+        
+        user_id = session['user'].get('id')
+        if not user_id:
+            return jsonify({'error': 'User ID not found in session'}), 400
+        
         with get_db() as conn:
-            donations = conn.execute('''
-                SELECT campaign_name, amount, donation_date, transaction_id
-                FROM donations
-                WHERE user_id = ?
-                ORDER BY donation_date DESC
-            ''', (user_id,)).fetchall()
-
-        return jsonify([dict(donation) for donation in donations])
+            # Explicitly convert rows to dictionaries
+            donations = conn.execute(
+                "SELECT campaign_name, amount, transaction_id, donation_date FROM donations WHERE user_id = ? ORDER BY donation_date DESC",
+                (user_id,)
+            ).fetchall()
+            
+            # Convert each row to a dictionary properly
+            donations_list = []
+            for donation in donations:
+                donations_list.append({
+                    'campaign_name': donation[0],
+                    'amount': donation[1],
+                    'transaction_id': donation[2],
+                    'donation_date': donation[3]
+                })
+            
+        return jsonify(donations_list)
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error in get_donation_history: {str(e)}")
+        return jsonify({'error': 'Server error', 'details': str(e)}), 500
 
 
 @app.route('/generate-receipt/<transaction_id>')
@@ -1686,42 +1738,21 @@ def generate_receipt(transaction_id):
     
 @app.route('/get-campaign-totals')
 def get_campaign_totals():
-    with get_db() as conn:
-        campaigns = conn.execute('SELECT name, raised FROM campaigns').fetchall()
-    return jsonify({c['name']: c['raised'] for c in campaigns})
-
-
-@app.route('/payment-success', methods=['POST'])
-def payment_success():
-    if 'user' not in session:
-        return jsonify({'error': 'Not authenticated'}), 401
-
-    data = request.json
-    required_fields = ['razorpay_payment_id', 'order_id', 'amount', 'campaign_name']
-    if not all(field in data for field in required_fields):
-        return jsonify({'error': 'Missing required fields'}), 400
-
     try:
-        user_id = session['user']['id']
         with get_db() as conn:
-            # Log donation
-            conn.execute('''
-                INSERT INTO donations (user_id, campaign_name, amount, donation_date, transaction_id)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, data['campaign_name'], data['amount'], datetime.utcnow(), data['razorpay_payment_id']))
-
-            # Update campaign raised amount
-            conn.execute('''
-                UPDATE campaigns
-                SET raised = raised + ?
-                WHERE name = ?
-            ''', (data['amount'], data['campaign_name']))
-
-        return jsonify({'success': True}), 200
+            # Get total raised for each campaign
+            campaigns = conn.execute(
+                "SELECT campaign_name, SUM(amount) as total_raised FROM donations GROUP BY campaign_name"
+            ).fetchall()
+            
+            # Convert to dictionary for easy access
+            campaign_totals = {campaign['campaign_name']: campaign['total_raised'] for campaign in campaigns}
+            
+        return jsonify(campaign_totals)
+        
     except Exception as e:
+        print(f"Error getting campaign totals: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-
     
 @app.route('/success_stories')
 def success_stories():
@@ -1824,6 +1855,7 @@ def book_session():
     except Exception as e:
         print("Error booking session:", e)
         return jsonify({'success': False, 'message': 'Internal server error'}), 500
+
 
 @app.route('/direct-session')
 def direct_session():
@@ -2003,6 +2035,9 @@ def get_message(session_id):
         print("Error fetching messages:", e)
         return jsonify({'success': False, 'message': 'Server error'}), 500
 
+
+
+
 # import random
 # import string
 
@@ -2060,6 +2095,9 @@ def get_message(session_id):
 #     except Exception as e:
 #         print(f"Error: {e}")
 #         return jsonify({'success': False, 'message': 'Internal Server Error'}), 500
+
+
+
 
 
 @app.route('/get_meet_link/<int:session_id>')
@@ -2454,8 +2492,7 @@ def verify_admin_key():
 @app.route('/dashfeed')
 def dashfeed():
     if "user" in session:
-        return render_template('dashfeed.html')  # Make sure dashfeed.html exists in templates folder
-
+        return render_template('dashfeed.html'
 
 @app.route('/events_admin')
 def events_admin():
