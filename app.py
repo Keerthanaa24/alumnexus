@@ -236,6 +236,8 @@ def init_db():
             transaction_id TEXT NOT NULL UNIQUE,
             donation_date TEXT DEFAULT CURRENT_TIMESTAMP,
             receipt_generated BOOLEAN DEFAULT 0
+            FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE
+
         );  
 
         CREATE TABLE IF NOT EXISTS event_reminders (
@@ -428,7 +430,7 @@ def login():
     with get_db() as conn:
         # Get user with all needed columns
         user = conn.execute(
-            "SELECT id, email, password_hash, active, failed_attempts, last_failed_attempt FROM user WHERE email = ?", 
+            "SELECT id, email, password_hash, active, failed_attempts, last_failed_attempt, role, fullname FROM user WHERE email = ?", 
             (email,)
         ).fetchone()
 
@@ -446,10 +448,18 @@ def login():
                 (user['id'],)
             )
             conn.commit()
-            session["user"] = user['email']
+            
+            # Improved session structure - maintains all existing security
+            session["user"] = {
+                "id": user['id'],
+                "email": user['email'],
+                "role": user['role'],
+                "name": user['fullname']
+            }
+            
             return jsonify(success=True, redirect=url_for('dashboard'))
 
-        # Only process failed attempts if password was wrong
+        # REST OF YOUR EXISTING FAILED LOGIN LOGIC REMAINS EXACTLY THE SAME
         current_time = datetime.now()
         timeout_minutes = 5  # Changed to 5 minutes as requested
         
@@ -487,7 +497,7 @@ def login():
             (new_attempts, current_time.isoformat(), user['id'])
         )
         conn.commit()
-        
+
         return jsonify(success=False, message="Incorrect username or password")
 
 @app.route('/dashboard')
@@ -1671,6 +1681,25 @@ def create_order():
     try:
         order = razorpay_client.order.create(data=order_data)
         return jsonify(order)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/payment-success', methods=['POST'])
+def payment_success():
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    data = request.json
+    user_id = session['user'].get('id') if isinstance(session['user'], dict) else session['user']
+    
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO donations (user_id, campaign_name, amount, transaction_id) VALUES (?, ?, ?, ?)",
+                (user_id, data['campaign'], data['amount']/100, data['transaction_id'])
+            )
+            conn.commit()
+        return jsonify({'status': 'success'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
