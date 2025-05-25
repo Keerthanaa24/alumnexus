@@ -192,51 +192,54 @@ document.getElementById("proceedToPay").addEventListener("click", async function
             description: `Donation to ${campaign.name}`,
             image: "https://example.com/your_logo.jpg",
             order_id: order.id,
-modal: {
-    ondismiss: function () {
-        document.getElementById("paymentStatus").innerHTML = `
-            <div class="payment-cancelled">
-                <p>❌ Payment was cancelled by the user</p>
-                <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
-            </div>
-        `;
-    }
-}
+            modal: {
+                ondismiss: function() {
+                    // This will be called when payment is cancelled
+                    document.getElementById("paymentStatus").innerHTML = `
+                        <div class="payment-cancelled">
+                            <p>Payment was cancelled</p>
+                            <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
+                        </div>
+                    `;
+                }
+            },
 
-handler: async function(response) {
-    const amount = document.getElementById("donationAmount").value;
-    const campaign = campaigns[currentCampaignIndex];
+        
+        const rzp = new Razorpay(options);
 
-    try {
-        const res = await fetch('/payment-success', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                razorpay_payment_id: response.razorpay_payment_id,
-                order_id: response.razorpay_order_id,
-                amount: parseInt(amount),
-                campaign_name: campaign.name
-            })
-        });
-
-        if (!res.ok) throw new Error('Failed to log donation');
-    } catch (err) {
-        console.error("Failed to log donation:", err);
-    }
-
-    // Update local state/UI
-    campaigns[currentCampaignIndex].raised += parseInt(amount);
-    updateCampaigns();
-
-    document.getElementById("successMessage").innerHTML = `
-        Payment Successful!<br><br>
-        Thank you for your donation of ₹${amount} to ${campaign.name}!<br>
-        Transaction ID: ${response.razorpay_payment_id}
-    `;
-    modals.success.style.display = "block";
-}
+        rzp.on('payment.failed', function (response) {
+            console.error("❌ Payment Failed", response);
+            let errorMsg = response.error.description || "Unknown error";
+            
+            // Check if this was a user cancellation
+            if (response.error.code === 'payment_cancelled') {
+                errorMsg = "Payment was cancelled by user";
+            }
+            
+            document.getElementById("paymentStatus").innerHTML = `
+                <div class="payment-error">
+                    <p>Payment failed ❌</p>
+                    <p>Reason: ${errorMsg}</p>
+                    <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
+                    <button onclick="showAlternativeMethods()" class="alt-method-btn">Other Payment Methods</button>
+                </div>
+            `;
+            modals.success.style.display = "none";
+        });
+        
+        rzp.open();
+        
+    } catch (error) {
+        console.error("Payment error:", error);
+        document.getElementById("paymentStatus").innerHTML = `
+            <div class="payment-error">
+                <p>Payment processing failed. Please try again.</p>
+                <button onclick="retryPayment()" class="retry-btn">Retry Payment</button>
+                <button onclick="showAlternativeMethods()" class="alt-method-btn">Other Payment Methods</button>
+            </div>
+        `;
+    }
+});
 
 // Retry payment function
 function retryPayment() {
@@ -344,9 +347,3 @@ async function loadDonationHistory() {
 function generateReceipt(transactionId) {
     window.open(`/generate-receipt/${transactionId}`, '_blank');
 }
-
-
-function generateReceipt(transactionId) {
-    window.open(`/generate-receipt/${transactionId}`, '_blank');
-}
-
