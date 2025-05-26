@@ -1,120 +1,120 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mentorship Program</title>
-    <style type="text/css">
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: 'Arial', sans-serif;
-            background-color: #f5f5f5;
-            padding: 20px;
-        }
-        .hero {
-            padding: 60px 20px;
-            color: white;
-            background: rgba(0, 0, 0, 0.6); /* Transparent background */
-            border-radius: 10px;
-            width: 80%;
-            margin: 20px auto;
-        }
+    <style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: url('/static/images/background_feed.PNG') no-repeat center center/cover;
+    text-align: center;
+    height:100vh;
+}
 
-        .search-box {
-            margin-top: 20px;
-        }
+.hero {
+    padding: 60px 20px;
+    color: white;
+    background: rgba(0, 0, 0, 0.6); /* Transparent background */
+    border-radius: 10px;
+    width: 80%;
+    margin: 20px auto;
+}
 
-        .search-box input {
-            padding: 10px;
-            width: 60%;
-            border: none;
-            border-radius: 5px;
-        }
+.search-box {
+    margin-top: 20px;
+}
 
-        .search-box button {
-            padding: 10px;
-            background: #0052cc;
-            border: none;
-            cursor: pointer;
-            color: white;
-            font-weight: bold;
-        }
+.search-box input {
+    padding: 10px;
+    width: 60%;
+    border: none;
+    border-radius: 5px;
+}
 
-        .categories, .mentors, .mentorship-info {
-            margin: 50px auto;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.8); /* Semi-transparent white */
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            width: 80%;
-        }
+.search-box button {
+    padding: 10px;
+    background: #0052cc;
+    border: none;
+    cursor: pointer;
+    color: white;
+    font-weight: bold;
+}
 
-        .category-list {
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
+.categories, .mentors, .mentorship-info {
+    margin: 50px auto;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.8); /* Semi-transparent white */
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    width: 80%;
+}
 
-        .category {
-            background: rgba(255, 204, 0, 0.8);
-            padding: 10px 20px;
-            border-radius: 20px;
-            font-weight: bold;
-        }
+.category-list {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
 
-        .mentor-list {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
+.category {
+    background: rgba(255, 204, 0, 0.8);
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-weight: bold;
+}
 
-        .mentor {
-            background: rgba(255, 255, 255, 0.85); /* Transparent card */
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            text-align: center;
-            width: 250px;
-        }
+.mentor-list {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
 
-        .mentor img {
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-        }
+.mentor {
+    background: rgba(255, 255, 255, 0.85); /* Transparent card */
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    width: 250px;
+}
 
-        button {
-            margin-top: 10px;
-            background: #0052cc;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
+.mentor img {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+}
 
-        .info-cards {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-        }
+button {
+    margin-top: 10px;
+    background: #0052cc;
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
 
-        .card {
-            background: rgba(255, 255, 255, 0.8);
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-        }
-        .hidden {
-            display: none !important;
-        }
-    </style>
+.info-cards {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.card {
+    background: rgba(255, 255, 255, 0.8);
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+.hidden {
+    display: none !important;
+}
+
+</style>
 </head>
 <body>
 
@@ -189,5 +189,6 @@
             });
         }
     </script>
+    
 </body>
 </html>
