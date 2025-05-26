@@ -782,11 +782,12 @@ def profile():
 
             # Get accepted connections
             connections = conn.execute("""
-                SELECT u.id, u.fullname, u.graduation_year, p.current_job, p.company 
+                SELECT u.id, u.fullname, u.graduation_year
                 FROM connection c
                 JOIN user u ON (c.sender_id = u.id OR c.receiver_id = u.id) AND u.id != ?
-                LEFT JOIN profile p ON u.id = p.user_id
-                WHERE (c.sender_id = ? OR c.receiver_id = ?) AND c.status = 'accepted'
+                WHERE (c.sender_id = ? OR c.receiver_id = ?) 
+                    AND c.status = 'accepted'
+                    AND u.privacy != 'private'
             """, (user['id'], user['id'], user['id'])).fetchall()
 
             return render_template('profile.html', 
@@ -821,7 +822,8 @@ def profile():
             success=False,
             message=f"Please fill all required fields: {', '.join(missing_fields)}"
         )
-
+    if not first_name.isalpha() or not last_name.isalpha():
+        return jsonify(success=False, message="Invalid data entry.")
     try:
         with get_db() as conn:
             row = conn.execute("SELECT * FROM user WHERE email = ?", (session_email,)).fetchone()
@@ -892,7 +894,6 @@ def profile():
         return jsonify(success=False, message="A user with this email already exists.")
     except Exception as e:
         return jsonify(success=False, message=f"An error occurred: {str(e)}")
-    
 @app.route('/create_mentor_session', methods=['POST'])
 def create_mentor_session():
     if 'user' not in session:
